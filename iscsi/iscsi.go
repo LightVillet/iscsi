@@ -4,8 +4,6 @@ import (
 	"net"
 )
 
-
-
 type Config struct {
 	CONN_HOST string
 	CONN_PORT string
@@ -20,11 +18,6 @@ type Server struct {
 func NewIscsiConn(cfg Config) (*Server, error) {
 	server := &Server{cfg: cfg}
 	return server, nil
-	//conn, err := l.Accept()
-	//if err != nil {
-	//	return nil, err
-	//}
-	//return conn, nil
 }
 
 func (s *Server) Start() error {
