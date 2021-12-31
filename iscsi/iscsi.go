@@ -1,16 +1,16 @@
 package iscsi
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
-	"encoding/binary"
 	"strings"
 )
 
 const (
 	OPCODE_BITMASK = 0b10111111
-	LOGIN_OPCODE = 0x03
-	DSL_BITMASK = 0x00FFFFFF
+	LOGIN_OPCODE   = 0x03
+	DSL_BITMASK    = 0x00FFFFFF
 )
 
 type Config struct {
@@ -19,21 +19,21 @@ type Config struct {
 }
 
 type Server struct {
-	cfg Config
+	cfg      Config
 	Listener net.Listener
 }
 
 type BHS struct {
-	Opcode byte
-	AHSLength byte
+	Opcode            byte
+	AHSLength         byte
 	DataSegmentLength uint32
-	LUN uint64
-	InitiatorTaskTag uint32
+	LUN               uint64
+	InitiatorTaskTag  uint32
 }
 
 type ISCSIPacket struct {
 	Header BHS
-	Data []byte
+	Data   []byte
 }
 
 func NewIscsiConn(cfg Config) (*Server, error) {
@@ -42,7 +42,7 @@ func NewIscsiConn(cfg Config) (*Server, error) {
 }
 
 func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.cfg.CONN_HOST + ":" + s.cfg.CONN_PORT)
+	l, err := net.Listen("tcp", s.cfg.CONN_HOST+":"+s.cfg.CONN_PORT)
 	go AcceptGor(l)
 	return err
 }
@@ -55,7 +55,7 @@ func AcceptGor(l net.Listener) {
 	for {
 		c, err := l.Accept()
 		if err != nil {
-			fmt.Errorf("%s\n", err)
+			fmt.Printf("%s\n", err)
 			return
 		}
 		go readGor(c)
@@ -67,9 +67,9 @@ func readGor(conn net.Conn) {
 	bufBHS := make([]byte, 48)
 	if reqLen, err := conn.Read(bufBHS); err != nil || reqLen != 48 {
 		if err != nil {
-			fmt.Errorf("%s\n", err)
+			fmt.Printf("%s\n", err)
 		} else {
-			fmt.Errorf("Error readig BHS!\n")
+			fmt.Printf("Error readig BHS!\n")
 		}
 		return
 	}
@@ -79,9 +79,9 @@ func readGor(conn net.Conn) {
 	p.Data = make([]byte, dataLen)
 	if reqLen, err := conn.Read(p.Data); err != nil || uint32(reqLen) != dataLen {
 		if err != nil {
-			fmt.Errorf("%s\n", err)
+			fmt.Printf("%s\n", err)
 		} else {
-			fmt.Errorf("Error reading Data!\n")
+			fmt.Printf("Error reading Data!\n")
 		}
 		return
 	}
@@ -101,7 +101,6 @@ func (p *ISCSIPacket) readBHS(buf []byte) {
 	p.Header.InitiatorTaskTag = binary.BigEndian.Uint32(buf[16:20])
 }
 
-
 func parseLoginReq(packet ISCSIPacket) error {
 	fmt.Printf("Data length: %d\n", packet.Header.DataSegmentLength)
 	args := make(map[string]string)
@@ -115,4 +114,3 @@ func parseLoginReq(packet ISCSIPacket) error {
 	}
 	return nil
 }
-
