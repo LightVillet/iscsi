@@ -31,13 +31,13 @@ const (
 )
 
 type Config struct {
-	CONN_HOST string
-	CONN_PORT string
+	Host string
+	Port string
 }
 
 type Server struct {
-	cfg      Config
-	Listener net.Listener
+	addr     string
+	listener net.Listener
 }
 
 type BHS struct {
@@ -62,36 +62,41 @@ type Session struct {
 	status int
 }
 
-func NewIscsiConn(cfg Config) (*Server, error) {
-	server := &Server{cfg: cfg}
+func NewIscsiServer(cfg Config) (*Server, error) {
+	server := &Server{
+		addr: net.JoinHostPort(cfg.Host, cfg.Port),
+	}
 	return server, nil
 }
 
 func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.cfg.CONN_HOST+":"+s.cfg.CONN_PORT)
-	if err != nil {
-		return err
+	if s.listener == nil {
+		l, err := net.Listen("tcp", s.addr)
+		if err != nil {
+			return err
+		}
+		s.listener = l
 	}
-	fmt.Println("Server started")
-	AcceptGor(l)
+
+	go s.acceptGor()
 	return nil
 }
 
 func (s *Server) Stop() error {
-	return s.Listener.Close()
+	return s.listener.Close()
 }
 
-func AcceptGor(l net.Listener) {
+func (s *Server) acceptGor() {
 	for {
-		s := Session{}
-		s.status = STATUS_FREE
-		c, err := l.Accept()
+		session := Session{}
+		session.status = STATUS_FREE
+		c, err := s.listener.Accept()
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			return
 		}
-		s.conn = c
-		go s.readGor()
+		session.conn = c
+		go session.readGor()
 	}
 }
 

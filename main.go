@@ -1,7 +1,7 @@
 package main
 
 import (
-	"iscsi/cmd"
+	"tgtd/cmd"
 )
 
 func main() {
