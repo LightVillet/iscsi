@@ -14,13 +14,13 @@ const (
 )
 
 type Config struct {
-	CONN_HOST string
-	CONN_PORT string
+	Host string
+	Port string
 }
 
 type Server struct {
-	cfg      Config
-	Listener net.Listener
+	addr     string
+	listener net.Listener
 }
 
 type BHS struct {
@@ -36,33 +36,42 @@ type ISCSIPacket struct {
 	Data   []byte
 }
 
-func NewIscsiConn(cfg Config) (*Server, error) {
-	server := &Server{cfg: cfg}
+func NewIscsiServer(cfg Config) (*Server, error) {
+	server := &Server{
+		addr: net.JoinHostPort(cfg.Host, cfg.Port),
+	}
 	return server, nil
 }
 
 func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.cfg.CONN_HOST+":"+s.cfg.CONN_PORT)
-	go AcceptGor(l)
-	return err
+	if s.listener == nil {
+		l, err := net.Listen("tcp", s.addr)
+		if err != nil {
+			return err
+		}
+		s.listener = l
+	}
+
+	go s.acceptGor()
+	return nil
 }
 
 func (s *Server) Stop() error {
-	return s.Listener.Close()
+	return s.listener.Close()
 }
 
-func AcceptGor(l net.Listener) {
+func (s *Server) acceptGor() {
 	for {
-		c, err := l.Accept()
+		c, err := s.listener.Accept()
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			return
 		}
-		go readGor(c)
+		go s.readGor(c)
 	}
 }
 
-func readGor(conn net.Conn) {
+func (s *Server) readGor(conn net.Conn) {
 	defer conn.Close()
 	bufBHS := make([]byte, 48)
 	if reqLen, err := conn.Read(bufBHS); err != nil || reqLen != 48 {

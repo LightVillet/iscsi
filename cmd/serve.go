@@ -2,21 +2,25 @@ package cmd
 
 import (
 	"fmt"
-	"iscsi/iscsi"
+	"tgtd/iscsi"
 
 	"github.com/spf13/cobra"
 )
 
-var IscsiHost string
-var IscsiPort string
+var serveFlags struct {
+	host string
+	port string
+}
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Create an iSCSI server",
-	Args: cobra.ExactArgs(2),
+	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		cfg := iscsi.Config{CONN_HOST: IscsiHost, CONN_PORT: IscsiPort}
-		s, err := iscsi.NewIscsiConn(cfg)
+		s, err := iscsi.NewIscsiServer(iscsi.Config{
+			Host: serveFlags.host,
+			Port: serveFlags.port,
+		})
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			return
@@ -25,12 +29,12 @@ var serveCmd = &cobra.Command{
 			fmt.Printf("%s\n", err)
 			return
 		}
-		fmt.Println("Success!")
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
-	serveCmd.PersistentFlags().StringVar(&IscsiHost, "host", "", "Connection host ip")
-	serveCmd.PersistentFlags().StringVar(&IscsiPort, "port", "p", "Connection port")
+
+	serveCmd.Flags().StringVarP(&serveFlags.host, "host", "h", "127.0.0.1", "Connection host ip")
+	serveCmd.Flags().StringVarP(&serveFlags.port, "port", "p", "3260", "Connection port")
 }
