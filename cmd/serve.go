@@ -19,14 +19,14 @@ var serveFlags struct {
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Create an iSCSI server",
-	Args:  cobra.ExactArgs(2),
+	Args:  cobra.ExactArgs(0),
 	Run:   runTgtd,
 }
 
 func init() {
 	rootCmd.AddCommand(serveCmd)
 
-	serveCmd.Flags().StringVarP(&serveFlags.host, "host", "h", "127.0.0.1", "Connection host ip")
+	serveCmd.Flags().StringVarP(&serveFlags.host, "host", "H", "127.0.0.1", "Connection host ip")
 	serveCmd.Flags().StringVarP(&serveFlags.port, "port", "p", "3260", "Connection port")
 }
 
