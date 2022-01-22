@@ -13,7 +13,7 @@ var IscsiPort string
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Create an iSCSI server",
-	Args: cobra.ExactArgs(2),
+	//Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := iscsi.Config{CONN_HOST: IscsiHost, CONN_PORT: IscsiPort}
 		s, err := iscsi.NewIscsiConn(cfg)
@@ -26,6 +26,7 @@ var serveCmd = &cobra.Command{
 			return
 		}
 		fmt.Println("Success!")
+		s.Start()
 	},
 }
 
