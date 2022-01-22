@@ -31,13 +31,13 @@ const (
 )
 
 type Config struct {
-	CONN_HOST string
-	CONN_PORT string
+	Host string
+	Port string
 }
 
 type Server struct {
-	cfg      Config
-	Listener net.Listener
+	addr     string
+	listener net.Listener
 }
 
 type BHS struct {
@@ -62,72 +62,80 @@ type Session struct {
 	status int
 }
 
-func NewIscsiConn(cfg Config) (*Server, error) {
-	server := &Server{cfg: cfg}
+func NewIscsiServer(cfg Config) (*Server, error) {
+	server := &Server{
+		addr: net.JoinHostPort(cfg.Host, cfg.Port),
+	}
 	return server, nil
 }
 
 func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.cfg.CONN_HOST+":"+s.cfg.CONN_PORT)
-	if err != nil {
-		return err
+	if s.listener == nil {
+		l, err := net.Listen("tcp", s.addr)
+		if err != nil {
+			return err
+		}
+		s.listener = l
 	}
-	fmt.Println("Server started")
-	AcceptGor(l)
+
+	go s.acceptGor()
 	return nil
 }
 
 func (s *Server) Stop() error {
-	return s.Listener.Close()
+	return s.listener.Close()
 }
 
-func AcceptGor(l net.Listener) {
+func (s *Server) acceptGor() {
 	for {
-		s := Session{}
-		s.status = STATUS_FREE
-		c, err := l.Accept()
+		session := Session{}
+		session.status = STATUS_FREE
+		c, err := s.listener.Accept()
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			return
 		}
-		s.conn = c
-		go s.readGor()
+		session.conn = c
+		go session.readGor()
 	}
 }
 
 func (s *Session) readGor() {
 	defer s.conn.Close()
-	var err error
-	for {
-		p := ISCSIPacket{}
-		err = p.recvBHS(s.conn)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			return
-		}
-		dataLen := p.bhs.dataSegmentLength
-		p.data = make([]byte, dataLen)
-		reqLen, err := s.conn.Read(p.data)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			return
-		}
-		if uint32(reqLen) != dataLen {
-			fmt.Printf("Error reading Data!\n")
-			return
-		}
-		switch p.bhs.opcode {
-		case LOGIN_REQ_OPCODE:
-			err = s.handleLoginReq(p)
-		default:
-			fmt.Println("Not login!")
-		}
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
-		if p.bhs.final {
-			return
-		}
+	bufBHS := make([]byte, 48)
+	reqLen, err := s.conn.Read(bufBHS)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+	if reqLen != 48 {
+		fmt.Println("Error reading BHS!")
+		return
+	}
+	p := ISCSIPacket{}
+	p.recvBHS(s.conn)
+	dataLen := p.bhs.dataSegmentLength
+	p.data = make([]byte, dataLen)
+	reqLen, err = s.conn.Read(p.data)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+	if uint32(reqLen) != dataLen {
+		fmt.Println("Error reading Data!")
+		return
+	}
+	switch p.bhs.opcode {
+	case LOGIN_REQ_OPCODE:
+		err = s.handleLoginReq(p)
+	default:
+		fmt.Println("Not login!")
+	}
+	if err != nil {
+		fmt.Printf("%s\n", err)
+	}
+	if p.bhs.final {
+		return
 	}
 }
 
