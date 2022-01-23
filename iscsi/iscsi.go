@@ -102,37 +102,34 @@ func (s *Server) acceptGor() {
 
 func (s *Session) readGor() {
 	defer s.conn.Close()
-	var err error
-	for {
-		p := ISCSIPacket{}
-		err = p.recvBHS(s.conn)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			return
-		}
-		dataLen := p.bhs.dataSegmentLength
-		p.data = make([]byte, dataLen)
-		reqLen, err := s.conn.Read(p.data)
-		if err != nil {
-			fmt.Printf("%s\n", err)
-			return
-		}
-		if uint32(reqLen) != dataLen {
-			fmt.Printf("Error reading Data!\n")
-			return
-		}
-		switch p.bhs.opcode {
-		case LOGIN_REQ_OPCODE:
-			err = s.handleLoginReq(p)
-		default:
-			fmt.Println("Not login!")
-		}
-		if err != nil {
-			fmt.Printf("%s\n", err)
-		}
-		if p.bhs.final {
-			return
-		}
+	p := ISCSIPacket{}
+	err := p.recvBHS(s.conn)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+	dataLen := p.bhs.dataSegmentLength
+	p.data = make([]byte, dataLen)
+	reqLen, err := s.conn.Read(p.data)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return
+	}
+	if uint32(reqLen) != dataLen {
+		fmt.Println("Error reading data!")
+		return
+	}
+	switch p.bhs.opcode {
+	case LOGIN_REQ_OPCODE:
+		err = s.handleLoginReq(p)
+	default:
+		fmt.Println("Not login!")
+	}
+	if err != nil {
+		fmt.Printf("%s\n", err)
+	}
+	if p.bhs.final {
+		return
 	}
 }
 
@@ -143,7 +140,7 @@ func (p *ISCSIPacket) recvBHS(conn net.Conn) error {
 		return err
 	}
 	if reqLen != 48 {
-		return errors.New("Error reading BHS")
+		return errors.New("Error reading BHS!")
 	}
 	if (buf[0]&IMMEDIATE_DELIVERY_BITMASK)<<7 == 1 {
 		p.bhs.immediate = true
@@ -215,7 +212,7 @@ func (s *Session) send(p ISCSIPacket) error {
 		return err
 	}
 	if uint32(sendLen) != 48+p.bhs.dataSegmentLength {
-		return errors.New("Error sending data")
+		return errors.New("Error sending data!")
 	}
 	return nil
 }
