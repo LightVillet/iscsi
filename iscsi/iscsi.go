@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -58,8 +59,9 @@ type ISCSIPacket struct {
 }
 
 type Session struct {
-	conn   net.Conn
-	status int
+	conn       net.Conn
+	maxRecvDSL int
+	status     int
 }
 
 func NewIscsiServer(cfg Config) (*Server, error) {
@@ -101,35 +103,34 @@ func (s *Server) acceptGor() {
 }
 
 func (s *Session) readGor() {
-	defer s.conn.Close()
-	p := ISCSIPacket{}
-	err := p.recvBHS(s.conn)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	}
-	dataLen := p.bhs.dataSegmentLength
-	p.data = make([]byte, dataLen)
-	reqLen, err := s.conn.Read(p.data)
-	if err != nil {
-		fmt.Printf("%s\n", err)
-		return
-	}
-	if uint32(reqLen) != dataLen {
-		fmt.Println("Error reading data!")
-		return
-	}
-	switch p.bhs.opcode {
-	case LOGIN_REQ_OPCODE:
-		err = s.handleLoginReq(p)
-	default:
-		fmt.Println("Not login!")
-	}
-	if err != nil {
-		fmt.Printf("%s\n", err)
-	}
-	if p.bhs.final {
-		return
+	//defer s.conn.Close()
+	for {
+		p := ISCSIPacket{}
+		err := p.recvBHS(s.conn)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return
+		}
+		dataLen := p.bhs.dataSegmentLength
+		p.data = make([]byte, dataLen)
+		reqLen, err := s.conn.Read(p.data)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return
+		}
+		if uint32(reqLen) != dataLen {
+			fmt.Println("Error reading data!")
+			return
+		}
+		switch p.bhs.opcode {
+		case LOGIN_REQ_OPCODE:
+			err = s.handleLoginReq(p)
+		default:
+			fmt.Println("Not login!")
+		}
+		if err != nil {
+			fmt.Printf("%s\n", err)
+		}
 	}
 }
 
@@ -164,6 +165,7 @@ func (p *ISCSIPacket) recvBHS(conn net.Conn) error {
 
 func (s *Session) handleLoginReq(req ISCSIPacket) error {
 	args := make(map[string]string)
+	var err error
 	version_max := req.bhs.arg0[1]
 	version_min := req.bhs.arg0[2]
 	for _, i := range strings.Split(string(req.data), "\x00") {
@@ -171,23 +173,47 @@ func (s *Session) handleLoginReq(req ISCSIPacket) error {
 			args[strings.Split(i, "=")[0]] = strings.Split(i, "=")[1]
 		}
 	}
-	for i, j := range args {
-		fmt.Printf("%s = %s\n", i, j)
+	s.maxRecvDSL, err = strconv.Atoi(args["MaxRecvDataSegmentLength"])
+	if err != nil {
+		return err
 	}
+	// Preparing args for answer
+	delete(args, "InitiatorName")
+	delete(args, "InitiatorAlias")
+	delete(args, "TargetName")
+	delete(args, "SessionType")
+	delete(args, "MaxRecvDataSegmentLength")
+	args["TargetPortalGroupTag"] = "1"
+	args["InitialR2T"] = "Yes"
+	args["MaxBurstLength"] = "262144"
+	args["FirstBurstLength"] = "65536"
 	ans := ISCSIPacket{}
-	ans.bhs.immediate = true
+	ans.data = make([]byte, 65536)
+	// Copying args
+	for i, j := range args {
+		copy(ans.data[ans.bhs.dataSegmentLength:], i)
+		ans.bhs.dataSegmentLength += uint32(len(i))
+		ans.data[ans.bhs.dataSegmentLength] = '='
+		ans.bhs.dataSegmentLength++
+		copy(ans.data[ans.bhs.dataSegmentLength:], j)
+		ans.bhs.dataSegmentLength += uint32(len(j))
+		ans.data[ans.bhs.dataSegmentLength] = 0x0
+		ans.bhs.dataSegmentLength++
+	}
 	ans.bhs.opcode = LOGIN_RESP_OPCODE
 	ans.bhs.final = true
 	ans.bhs.arg0 = make([]byte, 3)
-	ans.bhs.arg0[0] = STAGE_FULL // NSG
+	ans.bhs.arg0[0] = (STAGE_LOGIN_OP_NEG << 2) + STAGE_FULL // CSG | NSG
 	ans.bhs.arg0[1] = version_max
 	ans.bhs.arg0[2] = version_min
-	ans.bhs.dataSegmentLength = 0 //
 	ans.bhs.arg1 = make([]byte, 8)
+	copy(ans.bhs.arg1, req.bhs.arg1)
+	ans.bhs.arg1[6] = 0x3 // random TSIH
 	ans.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
 	ans.bhs.arg2 = make([]byte, 28)
 	ans.bhs.arg2[16] = 0 // Status-Class
-	err := s.send(ans)
+	ans.bhs.arg2[15] = 1
+	err = s.send(ans)
 	return err
 }
 
