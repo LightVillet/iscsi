@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"io"
 )
 
 const (
@@ -20,11 +21,13 @@ const (
 	LOGIN_RESP_OPCODE = 0x23
 )
 
+// https://datatracker.ietf.org/doc/html/rfc3720#section-7.1.1
 const (
 	STATUS_FREE      = 1
 	STATUS_LOGGED_IN = 5
 )
 
+// https://datatracker.ietf.org/doc/html/rfc3720#section-10.12.3
 const (
 	STAGE_SEC_NEG      = 0
 	STAGE_LOGIN_OP_NEG = 1
@@ -112,21 +115,21 @@ func (s *Session) readGor() {
 			return
 		}
 		dataLen := p.bhs.dataSegmentLength
+		// Including padding
+		if (dataLen / 4 != 0) {
+			dataLen += 4 - dataLen % 4
+		}
 		p.data = make([]byte, dataLen)
-		reqLen, err := s.conn.Read(p.data)
+		_, err = io.ReadFull(s.conn, p.data)
 		if err != nil {
 			fmt.Printf("%s\n", err)
-			return
-		}
-		if uint32(reqLen) != dataLen {
-			fmt.Println("Error reading data!")
 			return
 		}
 		switch p.bhs.opcode {
 		case LOGIN_REQ_OPCODE:
 			err = s.handleLoginReq(p)
 		default:
-			fmt.Println("Not login!")
+			fmt.Printf("Unsopported opcode: %x\n", p.bhs.opcode)
 		}
 		if err != nil {
 			fmt.Printf("%s\n", err)
@@ -136,12 +139,9 @@ func (s *Session) readGor() {
 
 func (p *ISCSIPacket) recvBHS(conn net.Conn) error {
 	buf := make([]byte, 48)
-	reqLen, err := conn.Read(buf)
+	_, err := io.ReadFull(conn, buf)
 	if err != nil {
 		return err
-	}
-	if reqLen != 48 {
-		return errors.New("Error reading BHS!")
 	}
 	if (buf[0]&IMMEDIATE_DELIVERY_BITMASK)<<7 == 1 {
 		p.bhs.immediate = true
@@ -177,29 +177,8 @@ func (s *Session) handleLoginReq(req ISCSIPacket) error {
 	if err != nil {
 		return err
 	}
-	// Preparing args for answer
-	delete(args, "InitiatorName")
-	delete(args, "InitiatorAlias")
-	delete(args, "TargetName")
-	delete(args, "SessionType")
-	delete(args, "MaxRecvDataSegmentLength")
-	args["TargetPortalGroupTag"] = "1"
-	args["InitialR2T"] = "Yes"
-	args["MaxBurstLength"] = "262144"
-	args["FirstBurstLength"] = "65536"
 	ans := ISCSIPacket{}
-	ans.data = make([]byte, 65536)
-	// Copying args
-	for i, j := range args {
-		copy(ans.data[ans.bhs.dataSegmentLength:], i)
-		ans.bhs.dataSegmentLength += uint32(len(i))
-		ans.data[ans.bhs.dataSegmentLength] = '='
-		ans.bhs.dataSegmentLength++
-		copy(ans.data[ans.bhs.dataSegmentLength:], j)
-		ans.bhs.dataSegmentLength += uint32(len(j))
-		ans.data[ans.bhs.dataSegmentLength] = 0x0
-		ans.bhs.dataSegmentLength++
-	}
+	// Collecting BHS
 	ans.bhs.opcode = LOGIN_RESP_OPCODE
 	ans.bhs.final = true
 	ans.bhs.arg0 = make([]byte, 3)
@@ -218,7 +197,7 @@ func (s *Session) handleLoginReq(req ISCSIPacket) error {
 }
 
 func (s *Session) send(p ISCSIPacket) error {
-	buf := make([]byte, 48+p.bhs.dataSegmentLength)
+	buf := make([]byte, 48)
 	buf[0] = p.bhs.opcode
 	if p.bhs.immediate {
 		buf[0] |= 0b01000000
@@ -232,13 +211,19 @@ func (s *Session) send(p ISCSIPacket) error {
 	copy(buf[8:16], p.bhs.arg1)
 	binary.BigEndian.PutUint32(buf[16:20], p.bhs.initiatorTaskTag)
 	copy(buf[20:48], p.bhs.arg2)
-	copy(buf[48:], p.data)
 	sendLen, err := s.conn.Write(buf)
 	if err != nil {
 		return err
 	}
-	if uint32(sendLen) != 48+p.bhs.dataSegmentLength {
-		return errors.New("Error sending data!")
+	if uint32(sendLen) != 48 {
+		return errors.New(fmt.Sprintf("Error sending BHS: expected %d bytes, sent %d bytes", 48, sendLen))
+	}
+	sendLen, err = s.conn.Write(p.data)
+	if err != nil {
+		return err
+	}
+	if uint32(sendLen) != p.bhs.dataSegmentLength {
+		return errors.New(fmt.Sprintf("Error sending data: expected %d bytes, sent %d bytes", p.bhs.dataSegmentLength, sendLen))
 	}
 	return nil
 }
