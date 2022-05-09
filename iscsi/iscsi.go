@@ -62,7 +62,7 @@ const (
 	DEVICE_PAGE_LEN = 32 // Device Identification Page - IBM Bridged
 )
 
-var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83}//, 0xb1, 0xb2, 0xb0}
+var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83} //, 0xb1, 0xb2, 0xb0}
 
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
 var LUNS = [...]uint64{0x00, 0x01}
@@ -104,12 +104,12 @@ type Session struct {
 }
 
 type CDB struct {
-	cdb_length          byte
-	groupCode           byte
-	opCode              byte
-	arg                 []byte
-	allocationLength    uint32
-	control             byte
+	cdb_length       byte
+	groupCode        byte
+	opCode           byte
+	arg              []byte
+	allocationLength uint32
+	control          byte
 }
 
 func NewIscsiServer(cfg Config) (*Server, error) {
@@ -239,7 +239,7 @@ func (s *Session) hangleTextReq(req ISCSIPacket) error {
 	ans := ISCSIPacket{}
 	ans.bhs.arg0 = make([]byte, 3)
 	lenData := len(discoveryData)
-	if (lenData%4 != 0) {
+	if lenData%4 != 0 {
 		lenData += 4 - lenData%4
 	}
 	ans.data = make([]byte, lenData)
@@ -315,7 +315,7 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 	// ExpCmdSN
 	binary.LittleEndian.PutUint32(ans.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
 	// MaxCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag + 8)
+	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag+8)
 	cdb.groupCode = req.bhs.arg2[12] >> 5
 	cdb.opCode = req.bhs.arg2[12]
 	// Group code determines cdb length
@@ -361,7 +361,7 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
 func (cdb *CDB) parseReportLunCDB() ([]byte, error) {
 	var data []byte
-	data = make([]byte, 8 + len(LUNS)*8)
+	data = make([]byte, 8+len(LUNS)*8)
 	// LUN list length
 	binary.BigEndian.PutUint32(data[0:4], uint32(len(LUNS)*8))
 	for i, Lun := range LUNS {
@@ -390,9 +390,9 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 	} else { // Vital Product Data
 		switch cdb.arg[1] { // Type of vital page
 		case 0x00: // List of vital pages
-			data = make([]byte, 4 + len(VITAL_PAGES))
+			data = make([]byte, 4+len(VITAL_PAGES))
 			for i, vitalPage := range VITAL_PAGES {
-				data[4 + i] = vitalPage
+				data[4+i] = vitalPage
 			}
 		case 0x80: // Unit serial number page
 			data = make([]byte, 8)
@@ -493,7 +493,7 @@ func (s *Session) send(p ISCSIPacket) error {
 	}
 	// Padding
 	if p.bhs.dataSegmentLength%4 != 0 {
-		pad := make([]byte, 4 - p.bhs.dataSegmentLength%4)
+		pad := make([]byte, 4-p.bhs.dataSegmentLength%4)
 		p.data = append(p.data, pad...)
 		p.bhs.dataSegmentLength += 4 - p.bhs.dataSegmentLength%4
 	}
