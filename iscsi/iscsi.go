@@ -59,13 +59,13 @@ const (
 
 // Device constants
 const (
-	DEVICE_PAGE_LEN = 32 // Device Identification Page - IBM Bridged
+	DEVICE_PAGE_LEN = 0x42 // Device Identification Page - IBM Bridged
 )
 
-var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83} //, 0xb1, 0xb2, 0xb0}
+var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83, 0xb1, 0xb2, 0xb0}
 
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
-var LUNS = [...]uint64{0x00, 0x01}
+var LUNS = [...]uint64{0x0000, 0x0001}
 
 type Config struct {
 	Host string
@@ -104,7 +104,8 @@ type Session struct {
 }
 
 type CDB struct {
-	cdb_length       byte
+	LUNNumber        byte
+	cdbLength        byte
 	groupCode        byte
 	opCode           byte
 	arg              []byte
@@ -151,7 +152,7 @@ func (s *Server) acceptGor() {
 }
 
 func (s *Session) readGor() {
-	//defer s.conn.Close()
+	defer s.conn.Close()
 	for {
 		p := ISCSIPacket{}
 		err := p.recvBHS(s.conn)
@@ -168,7 +169,7 @@ func (s *Session) readGor() {
 		p.data = make([]byte, dataLen)
 		_, err = io.ReadFull(s.conn, p.data)
 		if err != nil {
-			fmt.Printf("%s\n", err)
+			fmt.Printf("Error: %s\n", err)
 			return
 		}
 		switch p.bhs.opcode {
@@ -294,6 +295,42 @@ func (s *Session) handleLoginReq(req ISCSIPacket) error {
 	ans.bhs.arg2 = make([]byte, 28)
 	ans.bhs.arg2[16] = 0 // Status-Class
 	ans.bhs.arg2[15] = 1
+	// Collecting data
+	data := make(map[string]string)
+	data["TargetPortalGroupTag"] = "1"
+	data["HeaderDigest"] = "None"
+	data["DataDigest"] = "None"
+	data["DefaultTime2Wait"] = "2"
+	data["DefaultTime2Retain"] = "0"
+	data["IFMarker"] = "No"
+	data["OFMarker"] = "No"
+	data["ErrorRecoveryLevel"] = "0"
+	data["InitialR2T"] = "Yes"
+	data["ImmediateData"] = "Yes"
+	data["MaxBurstLength"] = "262144"
+	data["FirstBurstLength"] = "65536"
+	data["MaxOutstandingR2T"] = "1"
+	data["MaxConnections"] = "1"
+	data["DataPDUInOrder"] = "No"
+	data["DataSequenceInOrder"] = "No"
+	datalen := 0
+	for k, v := range data {
+		datalen += len(k) + len(v) + 2
+	}
+	ans.bhs.dataSegmentLength = uint32(datalen)
+	ans.data = make([]byte, datalen)
+	ind := 0
+	for k, v := range data {
+		copy(ans.data[ind:], k)
+		ind += len(k)
+		ans.data[ind] = '='
+		ind++
+		copy(ans.data[ind:], v)
+		ind += len(v)
+		ans.data[ind] = '\x00'
+		ind++
+	
+	}
 	err = s.send(ans)
 	return err
 }
@@ -315,25 +352,28 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 	// ExpCmdSN
 	binary.LittleEndian.PutUint32(ans.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
 	// MaxCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag+8)
+	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag)
+	ans.bhs.arg2[15] |= 0x80
+	cdb.LUNNumber = req.bhs.arg1[1]
+	fmt.Printf("%b\n", cdb.LUNNumber)
 	cdb.groupCode = req.bhs.arg2[12] >> 5
 	cdb.opCode = req.bhs.arg2[12]
 	// Group code determines cdb length
 	switch cdb.groupCode {
 	case 0b000:
-		cdb.cdb_length = 6
+		cdb.cdbLength = 6
 		cdb.arg = make([]byte, 3)
 		copy(cdb.arg, req.bhs.arg2[13:16])
 		cdb.allocationLength = uint32(req.bhs.arg2[16])
 	case 0b101:
-		cdb.cdb_length = 12
+		cdb.cdbLength = 12
 		cdb.arg = make([]byte, 4)
 		copy(cdb.arg, req.bhs.arg2[14:18])
 		cdb.allocationLength = binary.BigEndian.Uint32(req.bhs.arg2[18:22])
 	default:
 		return errors.New(fmt.Sprintf("Error parsing CDB: unsupported group code %x\n", cdb.groupCode))
 	}
-	cdb.control = req.bhs.arg2[12+cdb.cdb_length-1]
+	cdb.control = req.bhs.arg2[12+cdb.cdbLength-1]
 	switch cdb.opCode {
 	case 0x12:
 		ans.data, err = cdb.parseInquiryCDB()
@@ -364,9 +404,11 @@ func (cdb *CDB) parseReportLunCDB() ([]byte, error) {
 	data = make([]byte, 8+len(LUNS)*8)
 	// LUN list length
 	binary.BigEndian.PutUint32(data[0:4], uint32(len(LUNS)*8))
-	for i, Lun := range LUNS {
-		binary.LittleEndian.PutUint64(data[8*(i+1):8*(i+2)], Lun)
-	}
+	//for i, Lun := range LUNS {
+	//	binary.LittleEndian.PutUint64(data[8*(i+1):8*(i+2)], Lun)
+	//}
+	// Copying from tgtadm
+	data[17] = 0x01
 	return data, nil
 }
 
@@ -375,18 +417,30 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 	var data []byte
 	if cdb.arg[0] == 0 { // Product data
 		data = make([]byte, DEVICE_PAGE_LEN)
-		// Peripheral qualifier + device type
-		data[0] = (0b000 << 5) + 0x0C
 		// Version
 		data[2] = 0x05
 		// Response data format
-		data[3] = 2
+		data[3] = 0x12
 		// Additional length
-		data[4] = 62
+		data[4] = 0x3d
+		data[7] = 0x02
 		// Vendor ID
-		copy(data[8:16], "COOLCMPY")
-		// Product ID
-		copy(data[16:27], "COOLDEVICE")
+		copy(data[8:16], "IET     ")
+		copy(data[32:36], "0001")
+		// Peripheral qualifier + device type -- data[0]
+		// Product ID -- data[8:16]
+		switch cdb.LUNNumber {
+		case 0x00:
+			data[0] = (0b000 << 5) + 0x0C
+			copy(data[16:32], "Controller      ")
+			copy(data[58:64], "\x04\xc0\x09\x60\x01\xfb")
+		case 0x01:
+			data[0] = 0x00
+			copy(data[16:32], "VIRTUAL-DISK    ")
+			copy(data[58:64], "\x04\xc0\x09\x60\x03\x00")
+		default:
+			return nil, errors.New(fmt.Sprintf("Error parsing CDB: unsupported LUN number: %x\n", cdb.LUNNumber))
+		}
 	} else { // Vital Product Data
 		switch cdb.arg[1] { // Type of vital page
 		case 0x00: // List of vital pages
@@ -395,34 +449,69 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 				data[4+i] = vitalPage
 			}
 		case 0x80: // Unit serial number page
-			data = make([]byte, 8)
-			data[3] = 4
-			copy(data[4:8], "COOL")
+			data = make([]byte, 40)
+			data[3] = 0x24
+			// Copying from tgtadm answer
+			switch cdb.LUNNumber {
+			case 0x00:
+				copy(data[4:40], "                              beaf10")
+			case 0x01:
+				copy(data[4:40], "                              beaf11")
+
+			default:
+				return nil, errors.New(fmt.Sprintf("Error parsing CDB: unsupported LUN number: %x\n", cdb.LUNNumber))
+
+			}
 		case 0x83: // Device Identification
-			data = make([]byte, 48)
+			data = make([]byte, 76)
 			// Protocol id | code set
-			//data[4] = 2
-			data[4] = (0x6 << 4) + 0x2
+			data[4] = 2
+			//data[4] = (0x6 << 4) + 0x2
 			// PIV | Association | id type
-			//data[5] = 1
-			data[5] = (0b1 << 7) + 0x1
+			data[5] = 1
+			//data[5] = (0b1 << 7) + 0x1
 			// id length
-			data[7] = 8
-			copy(data[8:16], "VERYCOOL")
+			// Copying from tgtadm answer
+			data[7] = 0x24
+			copy(data[8:16], "IET     ")
+			copy(data[16:24], "00010000")
+			data[44] = 0x01
+			data[45] = 0x03
+			data[47] = 0x08
+			data[48] = 0x30
+			data[51] = 0x01
+			data[56] = 0x01
+			data[57] = 0x03
+			data[59] = 0x10
+			data[60] = 0x60
+			data[68] = 0x0e
+			data[73] = 0x01
+			switch cdb.LUNNumber {
+			case 0x00:
+				copy(data[16:24], "00010000")
+				data[50] = 0x00
+				data[75] = 0x00
+			case 0x01:
+				copy(data[16:24], "00010001")
+				data[50] = 0x01
+				data[75] = 0x01
+			default:
+				return nil, errors.New(fmt.Sprintf("Error parsing CDB: unsupported LUN number: %x\n", cdb.LUNNumber))
+			}
 			// https://github.com/fujita/tgt/blob/master/usr/spc.c#L162
-			data[16] = 1
-			data[17] = 3
-			data[19] = 8
-			binary.BigEndian.PutUint64(data[20:28], LUNS[0])
-			data[20] |= 3 << 4
-			data[28] = 1
-			data[29] = 3
-			data[31] = 0x10
-			// NAA_DESG_LEN_EXTD
-			binary.BigEndian.PutUint64(data[32:40], LUNS[0])
-			binary.BigEndian.PutUint64(data[40:48], LUNS[0])
-			data[32] &= 0x0F
-			data[32] |= 0x6 << 4
+			//	data[16] = 1
+			//	data[17] = 3
+			//	data[19] = 8
+			//	binary.BigEndian.PutUint64(data[20:28], LUNS[0])
+			//	data[20] |= 3 << 4
+			//	data[28] = 1
+			//	data[29] = 3
+			//	data[31] = 0x10
+			//	// NAA_DESG_LEN_EXTD
+			//	binary.BigEndian.PutUint64(data[32:40], LUNS[0])
+			//	binary.BigEndian.PutUint64(data[40:48], LUNS[0])
+			//	data[32] &= 0x0F
+			//	data[32] |= 0x6 << 4
 		case 0xb0:
 			data = make([]byte, 12)
 			// Maximum compare and write length
