@@ -62,10 +62,21 @@ const (
 	DEVICE_PAGE_LEN = 32 // Device Identification Page - IBM Bridged
 )
 
-var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83} //, 0xb1, 0xb2, 0xb0}
+var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83}
 
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
-var LUNS = [...]uint64{0x00, 0x01}
+var LUNS = map[byte]map[string]string{
+	0x00: {
+		"vendorId":   "COMPANY",
+		"productId":  "CONTROL",
+		"deviceType": "\x0C",
+	},
+	0x01: {
+		"vendorId":   "COMPANY",
+		"productId":  "DEVICE0",
+		"deviceType": "\x00",
+	},
+}
 
 type Config struct {
 	Host string
@@ -104,7 +115,8 @@ type Session struct {
 }
 
 type CDB struct {
-	cdb_length       byte
+	LUNNumber        byte
+	cdbLength        byte
 	groupCode        byte
 	opCode           byte
 	arg              []byte
@@ -151,7 +163,7 @@ func (s *Server) acceptGor() {
 }
 
 func (s *Session) readGor() {
-	//defer s.conn.Close()
+	defer s.conn.Close()
 	for {
 		p := ISCSIPacket{}
 		err := p.recvBHS(s.conn)
@@ -189,6 +201,7 @@ func (s *Session) readGor() {
 		}
 		if err != nil {
 			fmt.Printf("%s\n", err)
+			return
 		}
 	}
 }
@@ -234,7 +247,7 @@ func (s *Session) handleNOPReq(req ISCSIPacket) error {
 
 func (s *Session) hangleTextReq(req ISCSIPacket) error {
 	if !s.isDiscoverySession {
-		return errors.New("Unssuported text request in not discovery session\n")
+		return errors.New("Unsupported text request in not discovery session\n")
 	}
 	ans := ISCSIPacket{}
 	ans.bhs.arg0 = make([]byte, 3)
@@ -316,29 +329,51 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 	binary.LittleEndian.PutUint32(ans.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
 	// MaxCmdSN
 	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag+8)
+	cdb.LUNNumber = req.bhs.arg1[0]
 	cdb.groupCode = req.bhs.arg2[12] >> 5
 	cdb.opCode = req.bhs.arg2[12]
 	// Group code determines cdb length
 	switch cdb.groupCode {
 	case 0b000:
-		cdb.cdb_length = 6
+		cdb.cdbLength = 6
 		cdb.arg = make([]byte, 3)
 		copy(cdb.arg, req.bhs.arg2[13:16])
 		cdb.allocationLength = uint32(req.bhs.arg2[16])
 	case 0b101:
-		cdb.cdb_length = 12
-		cdb.arg = make([]byte, 4)
-		copy(cdb.arg, req.bhs.arg2[14:18])
+		cdb.cdbLength = 12
+		cdb.arg = make([]byte, 5)
+		copy(cdb.arg, req.bhs.arg2[13:18])
 		cdb.allocationLength = binary.BigEndian.Uint32(req.bhs.arg2[18:22])
+	case 0b100:
+		cdb.cdbLength = 16
+		cdb.arg = make([]byte, 9)
+		copy(cdb.arg, req.bhs.arg2[13:22])
+		cdb.allocationLength = binary.BigEndian.Uint32(req.bhs.arg2[22:26])
+	case 0b001:
+		cdb.cdbLength = 10
+		cdb.arg = make([]byte, 5)
+		copy(cdb.arg, req.bhs.arg2[13:18])
+		cdb.allocationLength = uint32(binary.BigEndian.Uint16(req.bhs.arg2[19:21]))
 	default:
-		return errors.New(fmt.Sprintf("Error parsing CDB: unsupported group code %x\n", cdb.groupCode))
+		return errors.New(fmt.Sprintf("Error parsing CDB: unsupported group code %b\n", cdb.groupCode))
 	}
-	cdb.control = req.bhs.arg2[12+cdb.cdb_length-1]
+	cdb.control = req.bhs.arg2[12+cdb.cdbLength-1]
 	switch cdb.opCode {
 	case 0x12:
-		ans.data, err = cdb.parseInquiryCDB()
+		ans.data, err = cdb.parseInquiry()
 	case 0xA0:
-		ans.data, err = cdb.parseReportLunCDB()
+		ans.data, err = cdb.parseReportLun()
+	case 0x00:
+		ans.data, err = cdb.parseTestUnitReady()
+	case 0x9E:
+		ans.data, err = cdb.parseReadCapacity()
+	case 0x1A:
+		ans.data, err = cdb.parseModeSense()
+	case 0xA3:
+		ans.data, err = cdb.parseReportOpcodes()
+	case 0x28:
+		cdb.allocationLength *= 512 // Number of blocks
+		ans.data, err = cdb.parseRead()
 	default:
 		err = errors.New(fmt.Sprintf("Error parsing CDB: unsupported command code %x\n", cdb.opCode))
 	}
@@ -350,6 +385,10 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 		ans.bhs.dataSegmentLength = cdb.allocationLength
 	} else {
 		ans.bhs.dataSegmentLength = uint32(len(ans.data))
+		if int(cdb.allocationLength) > len(ans.data) { // Underflow
+			ans.bhs.arg0[0] |= 0x03
+			binary.BigEndian.PutUint32(ans.bhs.arg2[24:28], cdb.allocationLength-uint32(len(ans.data)))
+		}
 	}
 	err = s.send(ans)
 	if err != nil {
@@ -359,24 +398,25 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 }
 
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
-func (cdb *CDB) parseReportLunCDB() ([]byte, error) {
-	var data []byte
-	data = make([]byte, 8+len(LUNS)*8)
+func (cdb *CDB) parseReportLun() ([]byte, error) {
+	data := make([]byte, 8+len(LUNS)*8)
 	// LUN list length
 	binary.BigEndian.PutUint32(data[0:4], uint32(len(LUNS)*8))
-	for i, Lun := range LUNS {
-		binary.LittleEndian.PutUint64(data[8*(i+1):8*(i+2)], Lun)
+	i := 0
+	for LUNId := range LUNS {
+		data[8*(i+1)] = LUNId
+		i++
 	}
 	return data, nil
 }
 
 // https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/inquiry-12h.html
-func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
+func (cdb *CDB) parseInquiry() ([]byte, error) {
 	var data []byte
 	if cdb.arg[0] == 0 { // Product data
 		data = make([]byte, DEVICE_PAGE_LEN)
 		// Peripheral qualifier + device type
-		data[0] = (0b000 << 5) + 0x0C
+		data[0] = LUNS[cdb.LUNNumber]["deviceType"][0]
 		// Version
 		data[2] = 0x05
 		// Response data format
@@ -384,9 +424,9 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 		// Additional length
 		data[4] = 62
 		// Vendor ID
-		copy(data[8:16], "COOLCMPY")
+		copy(data[8:], LUNS[cdb.LUNNumber]["vendorId"])
 		// Product ID
-		copy(data[16:27], "COOLDEVICE")
+		copy(data[16:], LUNS[cdb.LUNNumber]["productId"])
 	} else { // Vital Product Data
 		switch cdb.arg[1] { // Type of vital page
 		case 0x00: // List of vital pages
@@ -395,34 +435,33 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 				data[4+i] = vitalPage
 			}
 		case 0x80: // Unit serial number page
-			data = make([]byte, 8)
-			data[3] = 4
-			copy(data[4:8], "COOL")
+			data = make([]byte, 12)
+			data[3] = 8
+			copy(data[4:], LUNS[cdb.LUNNumber]["productId"])
 		case 0x83: // Device Identification
 			data = make([]byte, 48)
 			// Protocol id | code set
-			//data[4] = 2
-			data[4] = (0x6 << 4) + 0x2
+			data[4] = 2
 			// PIV | Association | id type
 			//data[5] = 1
 			data[5] = (0b1 << 7) + 0x1
 			// id length
 			data[7] = 8
-			copy(data[8:16], "VERYCOOL")
+			copy(data[8:], LUNS[cdb.LUNNumber]["productId"])
 			// https://github.com/fujita/tgt/blob/master/usr/spc.c#L162
 			data[16] = 1
 			data[17] = 3
 			data[19] = 8
-			binary.BigEndian.PutUint64(data[20:28], LUNS[0])
+			data[20] = cdb.LUNNumber
 			data[20] |= 3 << 4
 			data[28] = 1
 			data[29] = 3
 			data[31] = 0x10
 			// NAA_DESG_LEN_EXTD
-			binary.BigEndian.PutUint64(data[32:40], LUNS[0])
-			binary.BigEndian.PutUint64(data[40:48], LUNS[0])
+			data[32] = cdb.LUNNumber
 			data[32] &= 0x0F
 			data[32] |= 0x6 << 4
+			data[40] = cdb.LUNNumber
 		case 0xb0:
 			data = make([]byte, 12)
 			// Maximum compare and write length
@@ -432,11 +471,63 @@ func (cdb *CDB) parseInquiryCDB() ([]byte, error) {
 		default:
 			return nil, errors.New(fmt.Sprintf("Error parsing CDB: unsupported vital product page: %x\n", cdb.arg[1]))
 		}
-		data[0] = (0b000 << 5) + 0x0C
 		data[1] = cdb.arg[1]
 		// Data length in 2 bytes
 		data[2] = byte((len(data) - 4) >> 8)
 		data[3] = byte(len(data) - 4)
+	}
+	return data, nil
+}
+
+func (cdb *CDB) parseTestUnitReady() ([]byte, error) {
+	return nil, nil
+}
+
+func (cdb *CDB) parseReadCapacity() ([]byte, error) {
+	data := make([]byte, 32)
+	// logical block address
+	data[7] = 0xFF
+	// Logical block length in bytes
+	data[10] = 0x02
+	// Logical blocks per physical block exponent
+	data[13] = 0x03
+	return data, nil
+}
+
+func (cdb *CDB) parseModeSense() ([]byte, error) {
+	return nil, nil
+}
+
+func (cdb *CDB) parseReportOpcodes() ([]byte, error) {
+	if cdb.arg[0] != 0x0C {
+		return nil, errors.New(fmt.Sprintf("Error parsing REPORT OPCODES: expected %x, found %x\n", 0x0C, cdb.arg[0]))
+	}
+	var data []byte
+	// Bitmask for opcodes
+	switch cdb.arg[2] {
+	case 0x12: // Inquiry
+		data = make([]byte, 4+6)
+		copy(data[5:], "\x01\xFF\xFF\xFF\x07")
+	case 0x93: // Write same (16)
+		data = make([]byte, 4+16)
+		copy(data[5:], "\xF8\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\x00\x07")
+	case 0x41: // Write same (10)
+		data = make([]byte, 4+10)
+		copy(data[5:], "\xF8\xFF\xFF\xFF\xFF\x00\xFF\xFF\x07")
+	default:
+		return nil, errors.New(fmt.Sprintf("Error parsing REPORT OPCODES: unsupported comand %x\n", cdb.arg[2]))
+	}
+	data[1] = 0x03                // SUPPORT
+	data[3] = byte(len(data)) - 4 // Bitmask length
+	data[4] = cdb.arg[1]          // Opcode
+	return data, nil
+}
+
+func (cdb *CDB) parseRead() ([]byte, error) {
+	data := make([]byte, cdb.allocationLength)
+	var i uint32
+	for i = 0; i < cdb.allocationLength; i += 4 {
+		copy(data[i:i+4], "DATA")
 	}
 	return data, nil
 }
