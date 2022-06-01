@@ -150,14 +150,15 @@ func (s *Server) Stop() error {
 
 func (s *Server) acceptGor() {
 	for {
-		session := Session{}
-		session.status = STATE_FREE
 		c, err := s.listener.Accept()
 		if err != nil {
 			fmt.Printf("%s\n", err)
 			return
 		}
-		session.conn = c
+		session := &Session{
+			status: STATE_FREE,
+			conn:   c,
+		}
 		go session.readGor()
 	}
 }
