@@ -64,7 +64,8 @@ const (
 
 var VITAL_PAGES = [...]byte{0x00, 0x80, 0x83}
 
-// https://docs.oracle.com/en/storage/tape-storage/storagetek-sl150-modular-tape-library/slorm/report-luns-a0h.html
+// LUN is Logical Unit Number
+// See https://datatracker.ietf.org/doc/html/rfc3720#section-10.2.1.7
 var LUNS = map[byte]map[string]string{
 	0x00: {
 		"vendorId":   "COMPANY",
@@ -87,7 +88,8 @@ type Server struct {
 	addr     string
 	listener net.Listener
 }
-
+// BHS is Basic Header Segment
+// See https://datatracker.ietf.org/doc/html/rfc3720#section-10.2.1
 type BHS struct {
 	immediate         bool
 	opcode            Opcode
@@ -105,15 +107,18 @@ type ISCSIPacket struct {
 	data []byte
 }
 
+// See README for explanations of types of sessions and examples them
 type Session struct {
 	conn             net.Conn
 	maxRecvDSL       int
 	initiatorTaskTag uint32
 	status           State
-	// https://datatracker.ietf.org/doc/html/rfc3720#section-3.3
 	isDiscoverySession bool
 }
 
+
+// CDB is Command Descriptor Block
+// See https://datatracker.ietf.org/doc/html/rfc3720#section-10.3.5
 type CDB struct {
 	LUNNumber        byte
 	cdbLength        byte
