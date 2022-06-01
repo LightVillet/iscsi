@@ -213,7 +213,7 @@ func (p *ISCSIPacket) recvBHS(conn net.Conn) error {
 	if err != nil {
 		return err
 	}
-	if (buf[0]&IMMEDIATE_DELIVERY_BITMASK)<<7 == 1 {
+	if (buf[0]&IMMEDIATE_DELIVERY_BITMASK)>>7 == 1 {
 		p.bhs.immediate = true
 	}
 	p.bhs.opcode = (Opcode)(buf[0] &^ IMMEDIATE_DELIVERY_BITMASK)
