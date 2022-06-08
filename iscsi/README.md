@@ -20,4 +20,4 @@ With CDB opcode set to ```0xA3```, initiator asks for command's bitmask. Server 
 ### Read
 After all, with CDB opcode ```0x28``` initiator asks for data from logical unit. Server reponds with this data.
 ### NOP-In and NOP-Out
-Among other things, client may sometimes ping server with [NOP-In](https://datatracker.ietf.org/doc/html/rfc3720#section-10.19) command. Server should reponse with [NOP-Out](https://datatracker.ietf.org/doc/html/rfc3720#section-10.18).
+Among other things, client may sometimes ping server with [NOP-Out](https://datatracker.ietf.org/doc/html/rfc3720#section-10.18) command. Server should reponse with [NOP-In](https://datatracker.ietf.org/doc/html/rfc3720#section-10.19).
