@@ -237,45 +237,45 @@ func (p *ISCSIPacket) recvBHS(conn net.Conn) error {
 }
 
 func (s *Session) handleNOPReq(req ISCSIPacket) error {
-	ans := ISCSIPacket{}
-	ans.bhs.opcode = NOP_IN_OPCODE
-	ans.bhs.final = true
-	ans.bhs.arg0 = make([]byte, 3)
-	copy(ans.bhs.arg0, req.bhs.arg0)
-	ans.bhs.arg1 = make([]byte, 8)
-	copy(ans.bhs.arg1, req.bhs.arg1)
-	ans.bhs.arg2 = make([]byte, 28)
-	copy(ans.bhs.arg2, req.bhs.arg2)
-	return s.send(ans)
+	resp := ISCSIPacket{}
+	resp.bhs.opcode = NOP_IN_OPCODE
+	resp.bhs.final = true
+	resp.bhs.arg0 = make([]byte, 3)
+	copy(resp.bhs.arg0, req.bhs.arg0)
+	resp.bhs.arg1 = make([]byte, 8)
+	copy(resp.bhs.arg1, req.bhs.arg1)
+	resp.bhs.arg2 = make([]byte, 28)
+	copy(resp.bhs.arg2, req.bhs.arg2)
+	return s.send(resp)
 }
 
 func (s *Session) hangleTextReq(req ISCSIPacket) error {
 	if !s.isDiscoverySession {
 		return errors.New("Unsupported text request in not discovery session\n")
 	}
-	ans := ISCSIPacket{}
-	ans.bhs.arg0 = make([]byte, 3)
+	resp := ISCSIPacket{}
+	resp.bhs.arg0 = make([]byte, 3)
 	lenData := len(discoveryData)
 	if lenData%4 != 0 {
 		lenData += 4 - lenData%4
 	}
-	ans.data = make([]byte, lenData)
-	ans.bhs.opcode = TEXT_RESP_OPCODE
-	ans.bhs.final = true
-	ans.bhs.dataSegmentLength = (uint32)(lenData)
-	ans.bhs.arg1 = make([]byte, 8)
-	ans.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
-	ans.bhs.arg2 = make([]byte, 28)
-	binary.BigEndian.PutUint32(ans.bhs.arg2[0:4], 0xFFFFFFFF)
+	resp.data = make([]byte, lenData)
+	resp.bhs.opcode = TEXT_RESP_OPCODE
+	resp.bhs.final = true
+	resp.bhs.dataSegmentLength = (uint32)(lenData)
+	resp.bhs.arg1 = make([]byte, 8)
+	resp.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
+	resp.bhs.arg2 = make([]byte, 28)
+	binary.BigEndian.PutUint32(resp.bhs.arg2[0:4], 0xFFFFFFFF)
 	// StatSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[4:8], req.bhs.initiatorTaskTag)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[4:8], req.bhs.initiatorTaskTag)
 	// ExpCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
 	// MaxCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag)
-	ans.data = make([]byte, lenData)
-	copy(ans.data, discoveryData)
-	err := s.send(ans)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[12:16], req.bhs.initiatorTaskTag)
+	resp.data = make([]byte, lenData)
+	copy(resp.data, discoveryData)
+	err := s.send(resp)
 	return err
 }
 
@@ -296,43 +296,43 @@ func (s *Session) handleLoginReq(req ISCSIPacket) error {
 	if err != nil {
 		return err
 	}
-	ans := ISCSIPacket{}
+	resp := ISCSIPacket{}
 	// Collecting BHS
-	ans.bhs.opcode = LOGIN_RESP_OPCODE
-	ans.bhs.final = true
-	ans.bhs.arg0 = make([]byte, 3)
-	ans.bhs.arg0[0] = (STAGE_LOGIN_OP_NEG << 2) + STAGE_FULL // CSG | NSG
-	ans.bhs.arg0[1] = version_max
-	ans.bhs.arg0[2] = version_min
-	ans.bhs.arg1 = make([]byte, 8)
-	copy(ans.bhs.arg1, req.bhs.arg1)
-	ans.bhs.arg1[6] = 0x3 // random TSIH
-	ans.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
-	ans.bhs.arg2 = make([]byte, 28)
-	ans.bhs.arg2[16] = 0 // Status-Class
-	ans.bhs.arg2[15] = 1
-	err = s.send(ans)
+	resp.bhs.opcode = LOGIN_RESP_OPCODE
+	resp.bhs.final = true
+	resp.bhs.arg0 = make([]byte, 3)
+	resp.bhs.arg0[0] = (STAGE_LOGIN_OP_NEG << 2) + STAGE_FULL // CSG | NSG
+	resp.bhs.arg0[1] = version_max
+	resp.bhs.arg0[2] = version_min
+	resp.bhs.arg1 = make([]byte, 8)
+	copy(resp.bhs.arg1, req.bhs.arg1)
+	resp.bhs.arg1[6] = 0x3 // random TSIH
+	resp.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
+	resp.bhs.arg2 = make([]byte, 28)
+	resp.bhs.arg2[16] = 0 // Status-Class
+	resp.bhs.arg2[15] = 1
+	err = s.send(resp)
 	return err
 }
 
 func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 	var err error
-	ans := ISCSIPacket{}
+	resp := ISCSIPacket{}
 	cdb := CDB{}
-	ans.bhs.opcode = SCSI_DATA_IN_OPCODE
-	ans.bhs.final = true
-	ans.bhs.arg0 = make([]byte, 3)
-	ans.bhs.arg0[0] = 1
-	ans.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
-	ans.bhs.arg2 = make([]byte, 28)
-	// Target transfer tag
-	binary.BigEndian.PutUint32(ans.bhs.arg2[0:4], 0xFFFFFFFF)
+	resp.bhs.opcode = SCSI_DATA_IN_OPCODE
+	resp.bhs.final = true
+	resp.bhs.arg0 = make([]byte, 3)
+	resp.bhs.arg0[0] = 1
+	resp.bhs.initiatorTaskTag = req.bhs.initiatorTaskTag
+	resp.bhs.arg2 = make([]byte, 28)
+	// Target trrespfer tag
+	binary.BigEndian.PutUint32(resp.bhs.arg2[0:4], 0xFFFFFFFF)
 	// StatSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[4:8], req.bhs.initiatorTaskTag)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[4:8], req.bhs.initiatorTaskTag)
 	// ExpCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[8:12], req.bhs.initiatorTaskTag)
 	// MaxCmdSN
-	binary.LittleEndian.PutUint32(ans.bhs.arg2[12:16], req.bhs.initiatorTaskTag+8)
+	binary.LittleEndian.PutUint32(resp.bhs.arg2[12:16], req.bhs.initiatorTaskTag+8)
 	cdb.LUNNumber = req.bhs.arg1[0]
 	cdb.groupCode = req.bhs.arg2[12] >> 5
 	cdb.opCode = req.bhs.arg2[12]
@@ -364,20 +364,20 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 	cdb.control = req.bhs.arg2[12+cdb.cdbLength-1]
 	switch cdb.opCode {
 	case 0x12:
-		ans.data, err = cdb.parseInquiry()
+		resp.data, err = cdb.parseInquiry()
 	case 0xA0:
-		ans.data, err = cdb.parseReportLun()
+		resp.data, err = cdb.parseReportLun()
 	case 0x00:
-		ans.data, err = cdb.parseTestUnitReady()
+		resp.data, err = cdb.parseTestUnitReady()
 	case 0x9E:
-		ans.data, err = cdb.parseReadCapacity()
+		resp.data, err = cdb.parseReadCapacity()
 	case 0x1A:
-		ans.data, err = cdb.parseModeSense()
+		resp.data, err = cdb.parseModeSense()
 	case 0xA3:
-		ans.data, err = cdb.parseReportOpcodes()
+		resp.data, err = cdb.parseReportOpcodes()
 	case 0x28:
 		cdb.allocationLength *= 512 // Number of blocks
-		ans.data, err = cdb.parseRead()
+		resp.data, err = cdb.parseRead()
 	default:
 		err = errors.New(fmt.Sprintf("Error parsing CDB: unsupported command code %x\n", cdb.opCode))
 	}
@@ -385,16 +385,16 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 		return err
 	}
 	// Truncating if needed
-	if int(cdb.allocationLength) < len(ans.data) {
-		ans.bhs.dataSegmentLength = cdb.allocationLength
+	if int(cdb.allocationLength) < len(resp.data) {
+		resp.bhs.dataSegmentLength = cdb.allocationLength
 	} else {
-		ans.bhs.dataSegmentLength = uint32(len(ans.data))
-		if int(cdb.allocationLength) > len(ans.data) { // Underflow
-			ans.bhs.arg0[0] |= 0x03
-			binary.BigEndian.PutUint32(ans.bhs.arg2[24:28], cdb.allocationLength-uint32(len(ans.data)))
+		resp.bhs.dataSegmentLength = uint32(len(resp.data))
+		if int(cdb.allocationLength) > len(resp.data) { // Underflow
+			resp.bhs.arg0[0] |= 0x03
+			binary.BigEndian.PutUint32(resp.bhs.arg2[24:28], cdb.allocationLength-uint32(len(resp.data)))
 		}
 	}
-	err = s.send(ans)
+	err = s.send(resp)
 	if err != nil {
 		return err
 	}
@@ -537,31 +537,31 @@ func (cdb *CDB) parseRead() ([]byte, error) {
 }
 
 func (s *Session) handleUnsupportedReq(req ISCSIPacket) error {
-	ans := ISCSIPacket{}
-	ans.bhs.opcode = REJECT_OPCODE
-	ans.bhs.final = true
-	ans.bhs.arg0 = make([]byte, 3)
-	ans.bhs.arg0[1] = 0x05
-	ans.bhs.dataSegmentLength = 48 + req.bhs.dataSegmentLength
-	ans.bhs.arg1 = make([]byte, 8)
-	copy(ans.bhs.arg1, req.bhs.arg1)
-	ans.bhs.initiatorTaskTag = 0xFFFFFFFF
-	ans.data = make([]byte, 48+req.bhs.dataSegmentLength)
-	ans.data[0] = (byte)(req.bhs.opcode)
+	resp := ISCSIPacket{}
+	resp.bhs.opcode = REJECT_OPCODE
+	resp.bhs.final = true
+	resp.bhs.arg0 = make([]byte, 3)
+	resp.bhs.arg0[1] = 0x05
+	resp.bhs.dataSegmentLength = 48 + req.bhs.dataSegmentLength
+	resp.bhs.arg1 = make([]byte, 8)
+	copy(resp.bhs.arg1, req.bhs.arg1)
+	resp.bhs.initiatorTaskTag = 0xFFFFFFFF
+	resp.data = make([]byte, 48+req.bhs.dataSegmentLength)
+	resp.data[0] = (byte)(req.bhs.opcode)
 	if req.bhs.immediate {
-		ans.data[0] |= 0b01000000
+		resp.data[0] |= 0b01000000
 	}
-	copy(ans.data[1:4], req.bhs.arg0)
+	copy(resp.data[1:4], req.bhs.arg0)
 	if req.bhs.final {
-		ans.data[1] |= 0b10000000
+		resp.data[1] |= 0b10000000
 	}
-	binary.BigEndian.PutUint32(ans.data[4:8], req.bhs.dataSegmentLength)
-	ans.data[4] = req.bhs.totalAHSLength
-	copy(ans.data[8:16], req.bhs.arg1)
-	binary.BigEndian.PutUint32(ans.data[16:20], req.bhs.initiatorTaskTag)
-	copy(ans.data[20:48], req.bhs.arg2)
-	copy(ans.data[48:], req.data)
-	return s.send(ans)
+	binary.BigEndian.PutUint32(resp.data[4:8], req.bhs.dataSegmentLength)
+	resp.data[4] = req.bhs.totalAHSLength
+	copy(resp.data[8:16], req.bhs.arg1)
+	binary.BigEndian.PutUint32(resp.data[16:20], req.bhs.initiatorTaskTag)
+	copy(resp.data[20:48], req.bhs.arg2)
+	copy(resp.data[48:], req.data)
+	return s.send(resp)
 }
 
 func (s *Session) send(p ISCSIPacket) error {
