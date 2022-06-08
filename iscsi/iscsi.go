@@ -88,6 +88,7 @@ type Server struct {
 	addr     string
 	listener net.Listener
 }
+
 // BHS is Basic Header Segment
 // See https://datatracker.ietf.org/doc/html/rfc3720#section-10.2.1
 type BHS struct {
@@ -109,13 +110,11 @@ type ISCSIPacket struct {
 
 // See README for explanations of types of sessions and examples them
 type Session struct {
-	conn             net.Conn
-	maxRecvDSL       int
-	initiatorTaskTag uint32
-	status           State
+	conn               net.Conn
+	maxRecvDSL         int
+	status             State
 	isDiscoverySession bool
 }
-
 
 // CDB is Command Descriptor Block
 // See https://datatracker.ietf.org/doc/html/rfc3720#section-10.3.5
@@ -177,7 +176,6 @@ func (s *Session) readGor() {
 			fmt.Printf("%s\n", err)
 			return
 		}
-		s.initiatorTaskTag = p.bhs.initiatorTaskTag
 		dataLen := p.bhs.dataSegmentLength
 		// Including padding
 		if dataLen%4 != 0 {
