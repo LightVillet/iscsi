@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -76,6 +77,7 @@ var LUNS = map[byte]map[string]string{
 		"vendorId":   "COMPANY",
 		"productId":  "DEVICE0",
 		"deviceType": "\x00",
+		"path":       "/dev/sda", // TODO: make path as an argument
 	},
 }
 
@@ -114,6 +116,7 @@ type Session struct {
 	maxRecvDSL         int
 	status             State
 	isDiscoverySession bool
+	file               *os.File
 }
 
 // CDB is Command Descriptor Block
@@ -159,9 +162,15 @@ func (s *Server) acceptGor() {
 			fmt.Printf("%s\n", err)
 			return
 		}
+		f, err := os.Open(LUNS[1]["path"])
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return
+		}
 		session := &Session{
 			status: STATE_FREE,
 			conn:   c,
+			file:   f,
 		}
 		go session.readGor()
 	}
@@ -377,7 +386,7 @@ func (s *Session) handleSCSIReq(req ISCSIPacket) error {
 		resp.data, err = cdb.parseReportOpcodes()
 	case 0x28:
 		cdb.allocationLength *= 512 // Number of blocks
-		resp.data, err = cdb.parseRead()
+		resp.data, err = cdb.parseRead(s.file)
 	default:
 		err = errors.New(fmt.Sprintf("Error parsing CDB: unsupported command code %x\n", cdb.opCode))
 	}
@@ -490,7 +499,7 @@ func (cdb *CDB) parseTestUnitReady() ([]byte, error) {
 func (cdb *CDB) parseReadCapacity() ([]byte, error) {
 	data := make([]byte, 32)
 	// logical block address
-	data[7] = 0xFF
+	data[7] = 0x00
 	// Logical block length in bytes
 	data[10] = 0x02
 	// Logical blocks per physical block exponent
@@ -527,11 +536,13 @@ func (cdb *CDB) parseReportOpcodes() ([]byte, error) {
 	return data, nil
 }
 
-func (cdb *CDB) parseRead() ([]byte, error) {
+func (cdb *CDB) parseRead(f *os.File) ([]byte, error) {
 	data := make([]byte, cdb.allocationLength)
-	var i uint32
-	for i = 0; i < cdb.allocationLength; i += 4 {
-		copy(data[i:i+4], "DATA")
+	_, err := f.ReadAt(data, int64(binary.BigEndian.Uint32(cdb.arg[1:5])))
+	if err != nil {
+		if err != io.EOF {
+			return nil, err
+		}
 	}
 	return data, nil
 }
